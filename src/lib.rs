@@ -14,6 +14,13 @@ pub use stm32f4xx_hal as hal;
 #[cfg(feature = "stm32f4xx-hal")]
 pub use stm32f4xx_hal::stm32;
 
+/// Re-export
+#[cfg(feature = "stm32f1xx-hal")]
+pub use stm32f1xx_hal as hal;
+/// Re-export
+#[cfg(feature = "stm32f1xx-hal")]
+pub use stm32f1xx_hal::pac as stm32;
+
 use hal::rcc::Clocks;
 use stm32::{Interrupt, ETHERNET_DMA, ETHERNET_MAC, NVIC};
 
@@ -138,6 +145,7 @@ impl<'rx, 'tx> Eth<'rx, 'tx> {
             100_000_000..=149_999_999 => ETH_MACMIIAR_CR_HCLK_DIV_62,
             _ => ETH_MACMIIAR_CR_HCLK_DIV_102,
         };
+
         self.reset_dma_and_wait();
 
         // set clock range in MAC MII address register
@@ -149,11 +157,12 @@ impl<'rx, 'tx> Eth<'rx, 'tx> {
 
         // Configuration Register
         self.eth_mac.maccr.modify(|_, w| {
-            // CRC stripping for Type frames
-            w.cstf()
-                .set_bit()
-                // Fast Ethernet speed
-                .fes()
+            // CRC stripping for Type frames. STM32F1xx do not have this bit.
+            #[cfg(any(feature = "stm32f4xx-hal", feature = "stm32f7xx-hal"))]
+            let w = w.cstf().set_bit();
+
+            // Fast Ethernet speed
+            w.fes()
                 .set_bit()
                 // Duplex mode
                 .dm()
@@ -171,6 +180,7 @@ impl<'rx, 'tx> Eth<'rx, 'tx> {
                 .te()
                 .set_bit()
         });
+
         // frame filter register
         self.eth_mac.macffr.modify(|_, w| {
             // Receive All
@@ -180,11 +190,16 @@ impl<'rx, 'tx> Eth<'rx, 'tx> {
                 .pm()
                 .set_bit()
         });
+
         // Flow Control Register
         self.eth_mac.macfcr.modify(|_, w| {
             // Pause time
-            w.pt().bits(0x100)
+            #[allow(unused_unsafe)]
+            unsafe {
+                w.pt().bits(0x100)
+            }
         });
+
         // operation mode register
         self.eth_dma.dmaomr.modify(|_, w| {
             // Dropping of TCP/IP checksum error frames disable
@@ -206,8 +221,14 @@ impl<'rx, 'tx> Eth<'rx, 'tx> {
                 .osf()
                 .set_bit()
         });
+
         // bus mode register
         self.eth_dma.dmabmr.modify(|_, w| unsafe {
+            // Rx Tx priority ratio 2:1.
+            // TODO: Exists on `stm32f107` dmabmr, but is missing from `stm32f1`.
+            #[cfg(any(feature = "stm32f4xx-hal", feature = "stm32f7xx-hal"))]
+            let w = w.pm().bits(0b01);
+
             // Address-aligned beats
             w.aab()
                 .set_bit()
@@ -220,13 +241,11 @@ impl<'rx, 'tx> Eth<'rx, 'tx> {
                 // Programmable burst length
                 .pbl()
                 .bits(32)
-                // Rx Tx priority ratio 2:1
-                .pm()
-                .bits(0b01)
                 // Use separate PBL
                 .usp()
                 .set_bit()
         });
+
         Ok(())
     }
 
